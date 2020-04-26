@@ -41,7 +41,11 @@ Future<shelf.Response> __echoRequest(shelf.Request request, Database db) async {
     return shelf.Response(400, body: 'Invalid body');
   }
 
- return __handleApi(request.url.toString(), requestBody, db);
+  try {
+    return await __handleApi(request.url.toString(), requestBody, db);
+  } on UserParamException catch (err) {
+    return shelf.Response(400, body: 'Error: ${err.cause}');
+  }
 }
 
 Future<shelf.Response> __handleApi(String apiName, Map<String, dynamic>data, Database db) async {

@@ -6,6 +6,13 @@ import 'package:archive/archive.dart';
 
 const int MEM_TABLE_SIZE_LIMIT = 10;
 const int CHUNK_SIZE = 8192;
+const int MAX_KEY_LENGTH = 1000;
+const int MAX_VALUE_LENGTH = 65536;
+
+class UserParamException implements Exception {
+  String cause;
+  UserParamException(this.cause);
+}
 
 class Index {
   int tableIndex;
@@ -138,9 +145,19 @@ class Database {
   }
 
   void set(String key, Uint8List value) async {
+    var keyCodes = key.codeUnits;
+
+    if (keyCodes.length > MAX_KEY_LENGTH) {
+      throw UserParamException('Key too big');
+    }
+
+    if (value.length > MAX_VALUE_LENGTH) {
+      throw UserParamException('Value too big');
+    }
+
     var header = Uint8List(4);
     var view = ByteData.view(header.buffer);
-    var keyCodes = key.codeUnits;
+
 
     view.setUint16(0, keyCodes.length);
     view.setUint16(2, value.length);
