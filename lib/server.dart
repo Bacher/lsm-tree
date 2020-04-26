@@ -16,9 +16,10 @@ void startServer({ String hostname, int port, Database db }) async {
 Future<shelf.Response> _echoRequest(shelf.Request request, Database db) async {
   try {
     return await __echoRequest(request, db);
-  } catch (err) {
+  } catch (err, stack) {
     print('Request failed with error:');
     print(err);
+    print(stack);
     return shelf.Response.internalServerError();
   }
 }
