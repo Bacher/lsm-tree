@@ -1,8 +1,10 @@
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import 'package:simple_bloom_filter/simple_bloom_filter.dart';
 
 const int MEM_TABLE_SIZE_LIMIT = 10;
 const int CHUNK_SIZE = 8192;
@@ -218,6 +220,7 @@ class Database {
     var view = ByteData.view(snapshot.buffer);
     var index = Uint8List(indexSize);
     var viewIndex = ByteData.view(index.buffer);
+    var bloom = simple_bloom_filter(8192, 3);
 
     int offset = 0;
     int indexOffset = 0;
@@ -237,12 +240,33 @@ class Database {
       viewIndex.setUint16(indexOffset + 4, keyLength);
       index.setRange(indexOffset + 6, indexOffset + 6 + keyLength, keyCodes);
 
+      bloom.add(key);
+
       offset += 4 + keyLength + valueLength;
       indexOffset += 6 + keyLength;
     }
 
     await File('db/$tableName').writeAsBytes(snapshot);
     await File('db/${tableName}_index').writeAsBytes(index);
+
+
+    var bytesCount = (bloom.bitArray.length / 8).ceil();
+    var bloomList = Uint8List(bytesCount);
+    bloomList.fillRange(0, bytesCount, 0);
+
+    for (var byteIndex = 0; byteIndex < bytesCount; byteIndex++) {
+      int value = 0;
+
+      for (var biteIndex = 0; biteIndex < 8; biteIndex++) {
+        if (bloom.bitArray[byteIndex * 8 + biteIndex]) {
+          value += 1 << biteIndex;
+        }
+      }
+
+      bloomList[byteIndex] = value;
+    }
+
+    await File('db/${tableName}_bloom').writeAsBytes(bloomList);
 
     print('Table "$tableName" created');
 
