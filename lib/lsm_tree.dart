@@ -1,10 +1,11 @@
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:async';
 import 'dart:collection';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:simple_bloom_filter/simple_bloom_filter.dart';
+import 'merge.dart';
 
 const int MEM_TABLE_SIZE_LIMIT = 10;
 const int CHUNK_SIZE = 8192;
@@ -95,6 +96,19 @@ class Database {
     currentLog = File('db/log').openWrite(mode: FileMode.writeOnlyAppend);
 
     print('Database started');
+
+    var receivePort = ReceivePort();
+
+//    receivePort.listen((data) {
+//      data.send('LOL SOSO');
+//    });
+
+    // ignore: unawaited_futures
+    Isolate.spawn(runMergeScheduler, receivePort.sendPort).catchError((err) {
+      print('Merge isolate failed:');
+      print(err);
+    });
+
   }
 
   void applyLogData(Uint8List logData) {
