@@ -4,7 +4,7 @@ import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as io;
 import 'lsm_tree.dart';
 
-void startServer({ String hostname, int port, Database db }) async {
+void startServer({String hostname, int port, Database db}) async {
   var handler = const shelf.Pipeline()
       .addMiddleware(shelf.logRequests())
       .addHandler((req) => _echoRequest(req, db));
@@ -48,7 +48,8 @@ Future<shelf.Response> __echoRequest(shelf.Request request, Database db) async {
   }
 }
 
-Future<shelf.Response> __handleApi(String apiName, Map<String, dynamic>data, Database db) async {
+Future<shelf.Response> __handleApi(
+    String apiName, Map<String, dynamic> data, Database db) async {
   String result;
 
   switch (apiName) {

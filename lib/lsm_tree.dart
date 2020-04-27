@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'dart:collection';
@@ -7,7 +8,7 @@ import 'package:archive/archive.dart';
 import 'package:simple_bloom_filter/simple_bloom_filter.dart';
 import 'merge.dart';
 
-const int MEM_TABLE_SIZE_LIMIT = 10;
+const int MEM_TABLE_SIZE_LIMIT = 5;
 const int CHUNK_SIZE = 8192;
 const int MAX_KEY_LENGTH = 1000;
 const int MAX_VALUE_LENGTH = 65536;
@@ -17,11 +18,49 @@ class UserParamException implements Exception {
   UserParamException(this.cause);
 }
 
-class Index {
-  int tableIndex;
-  Map<String, int> index = {};
+class Page {
+  String pageName;
+  bool isLoaded = false;
+  Map<String, int> index = null;
+  Future<void> indexLoading;
 
-  Index(this.tableIndex);
+  Page(this.pageName);
+
+  Future<void> loadIndex() async {
+    if (isLoaded) {
+      return;
+    }
+
+    if (indexLoading != null) {
+      return indexLoading;
+    }
+
+    indexLoading = _loadIndex();
+    return indexLoading;
+  }
+
+  Future<void> _loadIndex() async {
+    var indexBytes = await File('db/${pageName}_index').readAsBytes();
+    var view = ByteData.view(indexBytes.buffer);
+
+    index = {};
+
+    int offset = 0;
+
+    while (offset < indexBytes.length) {
+      var dataOffset = view.getUint32(offset);
+      var keyLength = view.getUint16(offset + 4);
+      var key =
+          String.fromCharCodes(indexBytes, offset + 6, offset + 6 + keyLength);
+
+      index[key] = dataOffset;
+
+      offset += 6 + keyLength;
+    }
+
+    isLoaded = true;
+    print('Index "$pageName" loaded');
+  }
 
   Future<Uint8List> getValue(String key) async {
     var offset = index[key];
@@ -30,7 +69,7 @@ class Index {
       return null;
     }
 
-    var file = await File('db/table$tableIndex').open(mode:FileMode.read);
+    var file = await File('db/$pageName').open(mode: FileMode.read);
 
     var data = Uint8List(CHUNK_SIZE);
 
@@ -60,11 +99,107 @@ class Index {
   }
 }
 
+class State {
+  static Future<State> load() async {
+    var stateFile = File('db/state.json');
+
+    List<Page> pages = [];
+
+    if (await stateFile.exists()) {
+      var stateJson = await File('db/state.json').readAsString();
+      var stateData = jsonDecode(stateJson);
+
+      for (String pageName in stateData['pages']) {
+        pages.add(Page(pageName));
+      }
+    } else {
+      await File('db/state.json').writeAsString(jsonEncode({'pages': []}));
+    }
+
+    return State(pages);
+  }
+
+  List<Page> pages;
+
+  State(this.pages);
+
+  Future<void> addPage(String pageName) async {
+    var page = Page(pageName);
+    await page.loadIndex();
+    pages.add(page);
+
+    await _savePagesState();
+  }
+
+  Future<void> _savePagesState() async {
+    await File('db/state.json').writeAsString(jsonEncode({
+      'pages': List<String>.from(pages.map((page) => page.pageName)),
+    }));
+  }
+
+  Future<void> loadLastPage() async {
+    if (pages.isNotEmpty) {
+      await pages.last.loadIndex();
+    }
+  }
+
+  Future<Uint8List> getValue(key) async {
+    if (pages.isEmpty) {
+      return null;
+    }
+
+    for (var page in pages.reversed) {
+      if (!page.isLoaded) {
+        await page.loadIndex();
+      }
+
+      var value = await page.getValue(key);
+
+      if (value != null) {
+        return value;
+      }
+    }
+
+    return null;
+  }
+
+  Future<void> mergePages(List<String> replacePages, String byPage) async {
+    int index;
+
+    for (var i = 0; i < pages.length; i++) {
+      var page = pages[i];
+
+      if (page.pageName == replacePages[0]) {
+        index = i;
+        break;
+      }
+    }
+
+    if (index == null) {
+      throw Exception('Bad');
+    }
+
+    if (index == pages.length - 1) {
+      throw Exception('Bad');
+    }
+
+    if (pages[index + 1].pageName != replacePages[1]) {
+      throw Exception('Bad');
+    }
+
+    var newPage = Page(byPage);
+    pages.replaceRange(index, index + 2, [newPage]);
+
+    await _savePagesState();
+    await newPage.loadIndex();
+  }
+}
+
 class Database {
   SplayTreeMap<String, Uint8List> memtable;
   IOSink currentLog;
+  State state;
   bool _isMemTableSavingStarted = false;
-  List<Index> indexes = [];
 
   Database() {
     memtable = SplayTreeMap<String, Uint8List>();
@@ -74,12 +209,9 @@ class Database {
     print('Starting...');
 
     await Directory('db').create();
+    state = await State.load();
 
-    var index = await getLastTableIndex();
-
-    if (index != null) {
-      await readIndex(index);
-    }
+    await state.loadLastPage();
 
     Uint8List logData;
 
@@ -97,18 +229,30 @@ class Database {
 
     print('Database started');
 
-    var receivePort = ReceivePort();
+    startMergeIsolate();
+  }
 
-//    receivePort.listen((data) {
-//      data.send('LOL SOSO');
-//    });
+  void startMergeIsolate() {
+    final receivePort = ReceivePort();
+
+    receivePort.listen((data) async {
+      switch (data['type']) {
+        case 'update_state':
+          await state.mergePages(
+            List<String>.from(data['replacePages']),
+            data['byPage'],
+          );
+          return;
+        default:
+          print('Unknown action');
+      }
+    });
 
     // ignore: unawaited_futures
     Isolate.spawn(runMergeScheduler, receivePort.sendPort).catchError((err) {
       print('Merge isolate failed:');
       print(err);
     });
-
   }
 
   void applyLogData(Uint8List logData) {
@@ -119,8 +263,10 @@ class Database {
       var keyLength = view.getUint16(blockOffset);
       var valueLength = view.getUint16(blockOffset + 2);
 
-      var key = String.fromCharCodes(logData, blockOffset + 4, blockOffset + 4 + keyLength);
-      var value = logData.sublist(blockOffset + 4 + keyLength, blockOffset + 4 + keyLength + valueLength);
+      var key = String.fromCharCodes(
+          logData, blockOffset + 4, blockOffset + 4 + keyLength);
+      var value = logData.sublist(blockOffset + 4 + keyLength,
+          blockOffset + 4 + keyLength + valueLength);
 
       memtable[key] = value;
 
@@ -129,35 +275,7 @@ class Database {
   }
 
   Future<Uint8List> get(String key) async {
-    var value = memtable[key];
-
-    if (value != null) {
-      return value;
-    }
-
-    if (indexes.isEmpty) {
-      return null;
-    }
-
-    for (var index in indexes) {
-      var value = await index.getValue(key);
-
-      if (value != null) {
-        return value;
-      }
-    }
-
-    while (indexes.last.tableIndex != 1) {
-      var index = await readIndex(indexes.last.tableIndex - 1);
-
-      var value = await index.getValue(key);
-
-      if (value != null) {
-        return value;
-      }
-    }
-
-    return null;
+    return memtable[key] ?? await state.getValue(key);
   }
 
   void set(String key, Uint8List value) async {
@@ -173,7 +291,6 @@ class Database {
 
     var header = Uint8List(4);
     var view = ByteData.view(header.buffer);
-
 
     view.setUint16(0, keyCodes.length);
     view.setUint16(2, value.length);
@@ -248,7 +365,8 @@ class Database {
       view.setUint16(offset, keyLength);
       view.setUint16(offset + 2, valueLength);
       snapshot.setRange(offset + 4, offset + 4 + keyLength, keyCodes);
-      snapshot.setRange(offset + 4 + keyLength, offset + 4 + keyLength + valueLength, value);
+      snapshot.setRange(
+          offset + 4 + keyLength, offset + 4 + keyLength + valueLength, value);
 
       viewIndex.setUint32(indexOffset, offset);
       viewIndex.setUint16(indexOffset + 4, keyLength);
@@ -263,70 +381,40 @@ class Database {
     await File('db/$tableName').writeAsBytes(snapshot);
     await File('db/${tableName}_index').writeAsBytes(index);
 
-
-    var bytesCount = (bloom.bitArray.length / 8).ceil();
-    var bloomList = Uint8List(bytesCount);
-    bloomList.fillRange(0, bytesCount, 0);
-
-    for (var byteIndex = 0; byteIndex < bytesCount; byteIndex++) {
-      int value = 0;
-
-      for (var biteIndex = 0; biteIndex < 8; biteIndex++) {
-        if (bloom.bitArray[byteIndex * 8 + biteIndex]) {
-          value += 1 << biteIndex;
-        }
-      }
-
-      bloomList[byteIndex] = value;
-    }
-
-    await File('db/${tableName}_bloom').writeAsBytes(bloomList);
+//    var bytesCount = (bloom.bitArray.length / 8).ceil();
+//    var bloomList = Uint8List(bytesCount);
+//    bloomList.fillRange(0, bytesCount, 0);
+//
+//    for (var byteIndex = 0; byteIndex < bytesCount; byteIndex++) {
+//      int value = 0;
+//
+//      for (var biteIndex = 0; biteIndex < 8; biteIndex++) {
+//        if (bloom.bitArray[byteIndex * 8 + biteIndex]) {
+//          value += 1 << biteIndex;
+//        }
+//      }
+//
+//      bloomList[byteIndex] = value;
+//    }
+//
+//    await File('db/${tableName}_bloom').writeAsBytes(bloomList);
 
     print('Table "$tableName" created');
 
-    await readIndex(tableIndex, isLast: true);
+    await state.addPage(tableName);
 
     await currentLog.close();
     // await File('db/log').delete();
     currentLog = File('db/log').openWrite(mode: FileMode.writeOnly);
     memtable.clear();
 
-    print('Mem tabled cleared');
+    print('Mem table cleared');
 
     _isMemTableSavingStarted = false;
   }
-
-  Future<Index> readIndex(int tableIndex, { bool isLast = false }) async {
-    var indexBytes = await File('db/table${tableIndex}_index').readAsBytes();
-    var view = ByteData.view(indexBytes.buffer);
-
-    var index = Index(tableIndex);
-
-    int offset = 0;
-
-    while (offset < indexBytes.length) {
-      var dataOffset = view.getUint32(offset);
-      var keyLength = view.getUint16(offset + 4);
-      var key = String.fromCharCodes(indexBytes, offset + 6, offset + 6 + keyLength);
-
-      index.index[key] = dataOffset;
-
-      offset += 6 + keyLength;
-    }
-
-    if (isLast) {
-      indexes.insert(0, index);
-    } else {
-      indexes.add(index);
-    }
-
-    print('Index "table$tableIndex" loaded');
-
-    return index;
-  }
 }
 
-Future<int> calculate () async {
+Future<int> calculate() async {
   var file = File('bin/test.txt');
 
   var a = await file.open(mode: FileMode.read);
@@ -347,7 +435,6 @@ Future<int> calculate () async {
   // print(result);
 
   // print(String.fromCharCodes(result));
-
 
   return 6 * 7;
 }

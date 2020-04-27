@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -8,15 +10,14 @@ const int BULK_WRITE_SIZE = 8192;
 void runMergeScheduler(SendPort sendPort) async {
   print('Merger started');
 
-  var rc = ReceivePort();
+  schedule(sendPort);
+}
 
-  rc.listen((data) {
-    print('Inside isolate: $data');
+void schedule(SendPort sendPort) {
+  Timer(Duration(seconds: 5), () async {
+    await run(sendPort);
+    schedule(sendPort);
   });
-
-  sendPort.send(rc.sendPort);
-
-  await merge(1, 2);
 }
 
 class Row {
@@ -27,7 +28,7 @@ class Row {
 }
 
 class TableCursor {
-  int tableIndex;
+  String pageName;
   RandomAccessFile file;
   Uint8List buf;
   ByteData view;
@@ -35,13 +36,13 @@ class TableCursor {
   int offset = 0;
   int chunkLength = null;
 
-  TableCursor(this.tableIndex) {
+  TableCursor(this.pageName) {
     buf = Uint8List(MERGE_CHUNK_SIZE);
     view = ByteData.view(buf.buffer);
   }
 
   Future<void> start() async {
-    file = await File('db/table$tableIndex').open(mode: FileMode.read);
+    file = await File('db/$pageName').open(mode: FileMode.read);
   }
 
   Future<bool> readNextChunk() async {
@@ -76,7 +77,8 @@ class TableCursor {
     }
 
     var key = String.fromCharCodes(buf, offset + 4, offset + 4 + keyLength);
-    var value = buf.sublist(offset + 4 + keyLength, offset + 4 + keyLength + valueLength);
+    var value = buf.sublist(
+        offset + 4 + keyLength, offset + 4 + keyLength + valueLength);
 
     offset += 4 + keyLength + valueLength;
 
@@ -84,11 +86,22 @@ class TableCursor {
   }
 }
 
-void merge(int tableIndex1, int tableIndex2) async {
+void run(SendPort sendPort) async {
+  var jsonData = await File('db/state.json').readAsString();
+
+  var state = jsonDecode(jsonData);
+  var pages = List<String>.from(state['pages']);
+
+  if (pages.length >= 2) {
+    await merge(pages[0], pages[1], sendPort: sendPort);
+  }
+}
+
+void merge(String pageName1, String pageName2, {SendPort sendPort}) async {
   final List<Row> list = [];
 
-  final t1 = TableCursor(tableIndex1);
-  final t2 = TableCursor(tableIndex2);
+  final t1 = TableCursor(pageName1);
+  final t2 = TableCursor(pageName2);
 
   await Future.wait([
     t1.start(),
@@ -126,35 +139,72 @@ void merge(int tableIndex1, int tableIndex2) async {
     }
   }
 
-  var table = Uint8List(BULK_WRITE_SIZE);
-  var view = ByteData.view(table.buffer);
+  var page = Uint8List(BULK_WRITE_SIZE);
+  var view = ByteData.view(page.buffer);
   var offset = 0;
 
-  var newTable = await File('db/table1_1').openWrite();
+  var index = Uint8List(BULK_WRITE_SIZE);
+  var indexView = ByteData.view(index.buffer);
+  var indexOffset = 0;
+
+  var newPageName = pageName2 + 'm';
+
+  var newPage = await File('db/$newPageName').openWrite();
+  var newPageIndex = await File('db/${newPageName}_index').openWrite();
 
   for (var item in list) {
     var keyCodes = item.key.codeUnits;
     var keyLength = keyCodes.length;
 
-    if (offset + 4 + keyLength + item.value.length > table.length) {
-      newTable.add(table.sublist(0, offset));
-      await newTable.flush();
-      table.clear();
+    // Flush page data
+    if (offset + 4 + keyLength + item.value.length > page.length) {
+      newPage.add(page.sublist(0, offset));
+      await newPage.flush();
+      page.clear();
       offset = 0;
+    }
+
+    // Flush index data;
+    if (indexOffset + 6 + keyLength > index.length) {
+      newPageIndex.add(index.sublist(0, indexOffset));
+      await newPageIndex.flush();
+      index.clear();
+      indexOffset = 0;
     }
 
     view.setUint16(offset, keyCodes.length);
     view.setUint16(offset + 2, item.value.length);
-    table.setRange(offset + 4, offset + 4 + keyLength, keyCodes);
-    table.setRange(offset + 4 + keyLength, offset + 4 + keyLength + item.value.length, item.value);
+    page.setRange(offset + 4, offset + 4 + keyLength, keyCodes);
+    page.setRange(offset + 4 + keyLength,
+        offset + 4 + keyLength + item.value.length, item.value);
+
+    indexView.setUint32(indexOffset, offset);
+    indexView.setUint16(indexOffset + 4, keyLength);
+    index.setRange(indexOffset + 6, indexOffset + 6 + keyLength, keyCodes);
 
     offset += 4 + keyLength + item.value.length;
+    indexOffset += 6 + keyLength;
   }
 
-  newTable.add(table.sublist(0, offset));
+  newPage.add(page.sublist(0, offset));
+  newPageIndex.add(index.sublist(0, indexOffset));
 
-  await newTable.flush();
-  await newTable.close();
+  await Future.wait([
+    () async {
+      await newPage.flush();
+      await newPage.close();
+    }(),
+    () async {
+      await newPageIndex.flush();
+      await newPageIndex.close();
+    }()
+  ]);
 
-  print('Table "table${tableIndex1}" and "table${tableIndex2}" merged into "table1_1"');
+  print('Table "${pageName1}" and "$pageName2" merged into "$newPageName"');
+
+  sendPort.send({
+    'type': 'update_state',
+    'replacePages': [pageName1, pageName2],
+    'byPage': newPageName,
+  });
 }
