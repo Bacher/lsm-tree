@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:math';
 
 const int MERGE_CHUNK_SIZE = 2048;
 const int BULK_WRITE_SIZE = 8192;
@@ -147,7 +148,7 @@ void merge(String pageName1, String pageName2, {SendPort sendPort}) async {
   var indexView = ByteData.view(index.buffer);
   var indexOffset = 0;
 
-  var newPageName = pageName2 + 'm';
+  var newPageName = 'table${Random().nextInt(10000000000)}m';
 
   var newPage = await File('db/$newPageName').openWrite();
   var newPageIndex = await File('db/${newPageName}_index').openWrite();

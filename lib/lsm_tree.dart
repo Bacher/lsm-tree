@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:math';
 import 'package:archive/archive.dart';
 import 'package:simple_bloom_filter/simple_bloom_filter.dart';
 import 'merge.dart';
@@ -312,30 +313,8 @@ class Database {
     }
   }
 
-  Future<int> getLastTableIndex() async {
-    var filesList = Directory('db').list();
-    var rx = RegExp(r'^db/table(\d+)$');
-    int latestTableIndex;
-
-    for (var item in await filesList.toList()) {
-      var match = rx.firstMatch(item.path);
-
-      if (match != null) {
-        var tableIndex = int.parse(match.group(1));
-
-        if (tableIndex > (latestTableIndex ?? -1)) {
-          latestTableIndex = tableIndex;
-        }
-      }
-    }
-
-    return latestTableIndex;
-  }
-
   void saveMemTableData() async {
-    var lastTableIndex = await getLastTableIndex();
-    var tableIndex = (lastTableIndex ?? 0) + 1;
-    var tableName = 'table${tableIndex}';
+    var pageName = 'table${Random().nextInt(10000000000)}';
 
     var snapshotSize = 0;
     var indexSize = 0;
@@ -378,8 +357,8 @@ class Database {
       indexOffset += 6 + keyLength;
     }
 
-    await File('db/$tableName').writeAsBytes(snapshot);
-    await File('db/${tableName}_index').writeAsBytes(index);
+    await File('db/$pageName').writeAsBytes(snapshot);
+    await File('db/${pageName}_index').writeAsBytes(index);
 
 //    var bytesCount = (bloom.bitArray.length / 8).ceil();
 //    var bloomList = Uint8List(bytesCount);
@@ -397,11 +376,11 @@ class Database {
 //      bloomList[byteIndex] = value;
 //    }
 //
-//    await File('db/${tableName}_bloom').writeAsBytes(bloomList);
+//    await File('db/${pageName}_bloom').writeAsBytes(bloomList);
 
-    print('Table "$tableName" created');
+    print('Table "$pageName" created');
 
-    await state.addPage(tableName);
+    await state.addPage(pageName);
 
     await currentLog.close();
     // await File('db/log').delete();
