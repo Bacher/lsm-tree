@@ -9,7 +9,11 @@ pubspec.lock
 
 # Conventional directory for build outputs
 build/
-db/
+db*/
+
+stress-test/logs/
+stress-test/ammo*.txt
+stress-test/*.log
 
 # Directory created by dartdoc
 doc/api/

@@ -10,7 +10,7 @@ import 'package:simple_bloom_filter/simple_bloom_filter.dart';
 import 'isolate_medium.dart';
 import 'merge.dart';
 
-const int MEM_TABLE_SIZE_LIMIT = 5;
+const int MEM_TABLE_SIZE_LIMIT = 1000;
 const int CHUNK_SIZE = 8192;
 const int MAX_KEY_LENGTH = 1000;
 const int MAX_VALUE_LENGTH = 65536;
@@ -82,6 +82,13 @@ class Page {
     var keyLength = view.getUint16(0);
     var dataLength = view.getUint16(2);
 
+    // TODO: remove
+    if (keyLength > 1000) {
+      print('offset: $offset');
+      print('keyLength: $keyLength');
+      print('dataLength: $dataLength');
+    }
+
     var foundKey = String.fromCharCodes(data, 4, 4 + keyLength);
 
     if (foundKey != key) {
@@ -96,6 +103,8 @@ class Page {
 
       // TODO: Do we need check keys again?
     }
+
+    file.close();
 
     return data.sublist(4 + keyLength, 4 + keyLength + dataLength);
   }
@@ -231,6 +240,7 @@ class State {
 class Database {
   SplayTreeMap<String, Uint8List> memtable;
   IOSink currentLog;
+  Completer pageCreatingCompleter;
   State state;
   bool _isMemTableSavingStarted = false;
 
@@ -326,10 +336,14 @@ class Database {
     view.setUint16(0, keyCodes.length);
     view.setUint16(2, value.length);
 
+    // Wait page creation if in process now
+    if (pageCreatingCompleter != null) {
+      await pageCreatingCompleter.future;
+    }
+
     currentLog.add(header);
     currentLog.add(keyCodes);
     currentLog.add(value);
-    await currentLog.flush();
 
     memtable[key] = value;
 
@@ -344,6 +358,8 @@ class Database {
   }
 
   void saveMemTableData() async {
+    pageCreatingCompleter = Completer();
+
     var pageName = 'table${Random().nextInt(4294967296)}';
 
     var snapshotSize = 0;
@@ -410,14 +426,14 @@ class Database {
 
     print('Table "$pageName" created');
 
-    await state.addPage(pageName);
-
     await currentLog.close();
-    // await File('db/log').delete();
     currentLog = File('db/log').openWrite(mode: FileMode.writeOnly);
     memtable.clear();
+    pageCreatingCompleter.complete();
 
     print('Mem table cleared');
+
+    await state.addPage(pageName);
 
     _isMemTableSavingStarted = false;
   }
@@ -446,4 +462,10 @@ Future<int> calculate() async {
   // print(String.fromCharCodes(result));
 
   return 6 * 7;
+}
+
+Future<void> wait(Duration duration) {
+  final completer = Completer();
+  Timer(duration, completer.complete);
+  return completer.future;
 }

@@ -4,7 +4,7 @@ import 'package:args/args.dart';
 import 'package:lsm_tree/server.dart';
 import 'package:lsm_tree/lsm_tree.dart';
 
-const _hostname = 'localhost';
+const _hostname = '0.0.0.0';
 
 void main(List<String> args) async {
   var parser = ArgParser()

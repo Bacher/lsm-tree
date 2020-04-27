@@ -6,7 +6,7 @@ import 'lsm_tree.dart';
 
 void startServer({String hostname, int port, Database db}) async {
   var handler = const shelf.Pipeline()
-      .addMiddleware(shelf.logRequests())
+      // .addMiddleware(shelf.logRequests())
       .addHandler((req) => _echoRequest(req, db));
 
   var server = await io.serve(handler, hostname, port);

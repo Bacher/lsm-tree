@@ -12,6 +12,8 @@ const int BULK_WRITE_SIZE = 8192;
 const int SCHEDULER_DELAY_SEC = 10;
 
 void runMergeScheduler(SendPort sendPort) async {
+  return;
+
   print('Merger started');
 
   final medium = IsolateMedium(null, sendPort: sendPort);
@@ -148,6 +150,7 @@ void merge(String pageName1, String pageName2, {IsolateMedium medium}) async {
   var page = Uint8List(BULK_WRITE_SIZE);
   var view = ByteData.view(page.buffer);
   var offset = 0;
+  var overallOffset = 0;
 
   var index = Uint8List(BULK_WRITE_SIZE);
   var indexView = ByteData.view(index.buffer);
@@ -166,7 +169,8 @@ void merge(String pageName1, String pageName2, {IsolateMedium medium}) async {
     if (offset + 4 + keyLength + item.value.length > page.length) {
       newPage.add(page.sublist(0, offset));
       await newPage.flush();
-      page.clear();
+      page = Uint8List(BULK_WRITE_SIZE);
+      view = ByteData.view(page.buffer);
       offset = 0;
     }
 
@@ -174,7 +178,8 @@ void merge(String pageName1, String pageName2, {IsolateMedium medium}) async {
     if (indexOffset + 6 + keyLength > index.length) {
       newPageIndex.add(index.sublist(0, indexOffset));
       await newPageIndex.flush();
-      index.clear();
+      index = Uint8List(BULK_WRITE_SIZE);
+      indexView = ByteData.view(index.buffer);
       indexOffset = 0;
     }
 
@@ -184,11 +189,14 @@ void merge(String pageName1, String pageName2, {IsolateMedium medium}) async {
     page.setRange(offset + 4 + keyLength,
         offset + 4 + keyLength + item.value.length, item.value);
 
-    indexView.setUint32(indexOffset, offset);
+    indexView.setUint32(indexOffset, overallOffset);
     indexView.setUint16(indexOffset + 4, keyLength);
     index.setRange(indexOffset + 6, indexOffset + 6 + keyLength, keyCodes);
 
-    offset += 4 + keyLength + item.value.length;
+    var deltaOffset = 4 + keyLength + item.value.length;
+
+    offset += deltaOffset;
+    overallOffset += deltaOffset;
     indexOffset += 6 + keyLength;
   }
 

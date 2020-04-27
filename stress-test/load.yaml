@@ -1,0 +1,11 @@
+phantom:
+  address: 192.168.1.66:8080
+  ammofile: ammo.txt
+  ammo_type: uripost
+  load_profile:
+    load_type: rps # schedule load by defining requests per second
+    schedule: line(10, 500, 2m)
+console:
+  enabled: true # enable console output
+telegraf:
+  enabled: false # let's disable telegraf monitoring for the first time
