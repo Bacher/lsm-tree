@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert' as convert;
 import 'dart:typed_data';
 import 'package:shelf/shelf.dart' as shelf;
@@ -14,6 +15,10 @@ void startServer({String hostname, int port, Database db}) async {
 }
 
 Future<shelf.Response> _echoRequest(shelf.Request request, Database db) async {
+  var timer = Timer(Duration(seconds: 10), () {
+    print('Timeout reached!');
+  });
+
   try {
     return await __echoRequest(request, db);
   } catch (err, stack) {
@@ -21,6 +26,8 @@ Future<shelf.Response> _echoRequest(shelf.Request request, Database db) async {
     print(err);
     print(stack);
     return shelf.Response.internalServerError();
+  } finally {
+    timer.cancel();
   }
 }
 

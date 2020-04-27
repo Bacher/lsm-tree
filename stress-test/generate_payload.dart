@@ -11,7 +11,7 @@ void main() async {
 [Content-type: application/json]
 ''');
 
-  for (var i = 1; i < 10000; i++) {
+  for (var i = 1; i < 100000; i++) {
     var id = Random().nextInt(5000);
 
     if (Random().nextInt(10) < 5) {
