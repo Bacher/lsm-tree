@@ -122,6 +122,8 @@ class State {
   }
 
   List<Page> pages;
+  Future<void> stateSaving;
+  Completer stateSavingCompleter;
 
   State(this.pages);
 
@@ -134,6 +136,28 @@ class State {
   }
 
   Future<void> _savePagesState() async {
+    Completer completer;
+
+    if (stateSaving != null) {
+      if (stateSavingCompleter == null) {
+        completer = stateSavingCompleter = Completer();
+        await stateSaving;
+      } else {
+        return await stateSavingCompleter.future;
+      }
+    }
+
+    stateSaving = __savePagesState();
+    await stateSaving;
+    stateSaving = null;
+
+    if (completer != null) {
+      completer.complete();
+      stateSavingCompleter = null;
+    }
+  }
+
+  Future<void> __savePagesState() async {
     await File('db/state.json').writeAsString(jsonEncode({
       'pages': List<String>.from(pages.map((page) => page.pageName)),
     }));
