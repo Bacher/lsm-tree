@@ -5,19 +5,23 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:math';
 
+import 'isolate_medium.dart';
+
 const int MERGE_CHUNK_SIZE = 2048;
 const int BULK_WRITE_SIZE = 8192;
 
 void runMergeScheduler(SendPort sendPort) async {
   print('Merger started');
 
-  schedule(sendPort);
+  final medium = IsolateMedium(null, sendPort: sendPort);
+
+  schedule(medium);
 }
 
-void schedule(SendPort sendPort) {
+void schedule(IsolateMedium medium) {
   Timer(Duration(seconds: 5), () async {
-    await run(sendPort);
-    schedule(sendPort);
+    await run(medium);
+    schedule(medium);
   });
 }
 
@@ -87,18 +91,18 @@ class TableCursor {
   }
 }
 
-void run(SendPort sendPort) async {
+void run(IsolateMedium medium) async {
   var jsonData = await File('db/state.json').readAsString();
 
   var state = jsonDecode(jsonData);
   var pages = List<String>.from(state['pages']);
 
   if (pages.length >= 2) {
-    await merge(pages[0], pages[1], sendPort: sendPort);
+    await merge(pages[0], pages[1], medium: medium);
   }
 }
 
-void merge(String pageName1, String pageName2, {SendPort sendPort}) async {
+void merge(String pageName1, String pageName2, {IsolateMedium medium}) async {
   final List<Row> list = [];
 
   final t1 = TableCursor(pageName1);
@@ -148,7 +152,7 @@ void merge(String pageName1, String pageName2, {SendPort sendPort}) async {
   var indexView = ByteData.view(index.buffer);
   var indexOffset = 0;
 
-  var newPageName = 'table${Random().nextInt(10000000000)}m';
+  var newPageName = 'table${Random().nextInt(4294967296)}m';
 
   var newPage = await File('db/$newPageName').openWrite();
   var newPageIndex = await File('db/${newPageName}_index').openWrite();
@@ -203,8 +207,7 @@ void merge(String pageName1, String pageName2, {SendPort sendPort}) async {
 
   print('Table "${pageName1}" and "$pageName2" merged into "$newPageName"');
 
-  sendPort.send({
-    'type': 'update_state',
+  await medium.call('update_state', {
     'replacePages': [pageName1, pageName2],
     'byPage': newPageName,
   });

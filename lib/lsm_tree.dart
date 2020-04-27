@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'dart:math';
 import 'package:archive/archive.dart';
 import 'package:simple_bloom_filter/simple_bloom_filter.dart';
+import 'isolate_medium.dart';
 import 'merge.dart';
 
 const int MEM_TABLE_SIZE_LIMIT = 5;
@@ -234,23 +235,23 @@ class Database {
   }
 
   void startMergeIsolate() {
-    final receivePort = ReceivePort();
+    var medium = IsolateMedium((String methodName, dynamic params) async {
+      print('method called: $methodName $params');
 
-    receivePort.listen((data) async {
-      switch (data['type']) {
+      switch (methodName) {
         case 'update_state':
           await state.mergePages(
-            List<String>.from(data['replacePages']),
-            data['byPage'],
+            List<String>.from(params['replacePages']),
+            params['byPage'],
           );
           return;
         default:
-          print('Unknown action');
+          throw Exception('Unknown method');
       }
     });
 
     // ignore: unawaited_futures
-    Isolate.spawn(runMergeScheduler, receivePort.sendPort).catchError((err) {
+    Isolate.spawn(runMergeScheduler, medium.pipe).catchError((err) {
       print('Merge isolate failed:');
       print(err);
     });
@@ -314,7 +315,7 @@ class Database {
   }
 
   void saveMemTableData() async {
-    var pageName = 'table${Random().nextInt(10000000000)}';
+    var pageName = 'table${Random().nextInt(4294967296)}';
 
     var snapshotSize = 0;
     var indexSize = 0;
