@@ -194,6 +194,13 @@ class State {
 
     await _savePagesState();
     await newPage.loadIndex();
+
+    await Future.wait([
+      File('db/${replacePages[0]}').delete(),
+      File('db/${replacePages[0]}_index').delete(),
+      File('db/${replacePages[1]}').delete(),
+      File('db/${replacePages[1]}_index').delete(),
+    ]);
   }
 }
 
@@ -236,8 +243,6 @@ class Database {
 
   void startMergeIsolate() {
     var medium = IsolateMedium((String methodName, dynamic params) async {
-      print('method called: $methodName $params');
-
       switch (methodName) {
         case 'update_state':
           await state.mergePages(
