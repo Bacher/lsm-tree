@@ -4,7 +4,7 @@ phantom:
   ammo_type: uripost
   load_profile:
     load_type: rps # schedule load by defining requests per second
-    schedule: line(200, 1000, 20m)
+    schedule: line(200, 800, 20m)
 console:
   enabled: true # enable console output
 telegraf:

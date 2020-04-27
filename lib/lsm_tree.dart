@@ -10,7 +10,7 @@ import 'package:simple_bloom_filter/simple_bloom_filter.dart';
 import 'isolate_medium.dart';
 import 'merge.dart';
 
-const int MEM_TABLE_SIZE_LIMIT = 1000;
+const int MEM_TABLE_SIZE_LIMIT = 5000;
 const int CHUNK_SIZE = 8192;
 const int MAX_KEY_LENGTH = 1000;
 const int MAX_VALUE_LENGTH = 65536;
@@ -25,8 +25,19 @@ class Page {
   bool isLoaded = false;
   Map<String, int> index = null;
   Future<void> indexLoading;
+  RandomAccessFile file;
+  Future currentReading = Future.value();
 
   Page(this.pageName);
+
+  void close() {
+    if (file != null) {
+      file.close().catchError((err) {
+        print('Closing failed:');
+        print(err);
+      });
+    }
+  }
 
   Future<void> loadIndex() async {
     if (isLoaded) {
@@ -71,12 +82,9 @@ class Page {
       return null;
     }
 
-    var file = await File('db/$pageName').open(mode: FileMode.read);
-
     var data = Uint8List(CHUNK_SIZE);
 
-    await file.setPosition(offset);
-    await file.readInto(data);
+    await readFromPosition(offset, data);
 
     var view = ByteData.view(data.buffer);
     var keyLength = view.getUint16(0);
@@ -98,15 +106,22 @@ class Page {
     if (dataLength > CHUNK_SIZE - 4 - keyLength) {
       var data = Uint8List(4 + keyLength + dataLength);
 
-      await file.setPosition(offset);
-      await file.readInto(data);
-
-      // TODO: Do we need check keys again?
+      await readFromPosition(offset, data);
     }
 
-    file.close();
-
     return data.sublist(4 + keyLength, 4 + keyLength + dataLength);
+  }
+
+  Future<void> readFromPosition(int position, Uint8List buffer) {
+    return currentReading =
+        currentReading.then((_) => _readFromPosition(position, buffer));
+  }
+
+  Future<void> _readFromPosition(int position, Uint8List buffer) async {
+    file ??= await File('db/$pageName').open(mode: FileMode.read);
+
+    await file.setPosition(position);
+    await file.readInto(buffer);
   }
 }
 
@@ -221,6 +236,14 @@ class State {
     if (pages[index + 1].pageName != replacePages[1]) {
       throw Exception('Bad');
     }
+
+    var page1 = pages[index];
+    var page2 = pages[index + 1];
+
+    Timer(Duration(seconds: 10), () {
+      page1.close();
+      page2.close();
+    });
 
     var newPage = Page(byPage);
     pages.replaceRange(index, index + 2, [newPage]);

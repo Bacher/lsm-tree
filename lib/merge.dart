@@ -12,8 +12,6 @@ const int BULK_WRITE_SIZE = 8192;
 const int SCHEDULER_DELAY_SEC = 10;
 
 void runMergeScheduler(SendPort sendPort) async {
-  return;
-
   print('Merger started');
 
   final medium = IsolateMedium(null, sendPort: sendPort);

@@ -12,7 +12,7 @@ void main() async {
 ''');
 
   for (var i = 1; i < 100000; i++) {
-    var id = Random().nextInt(5000);
+    var id = Random().nextInt(20000);
 
     if (Random().nextInt(10) < 5) {
       var setJson = jsonEncode({
