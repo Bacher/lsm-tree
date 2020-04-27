@@ -9,6 +9,7 @@ import 'isolate_medium.dart';
 
 const int MERGE_CHUNK_SIZE = 2048;
 const int BULK_WRITE_SIZE = 8192;
+const int SCHEDULER_DELAY_SEC = 10;
 
 void runMergeScheduler(SendPort sendPort) async {
   print('Merger started');
@@ -19,7 +20,7 @@ void runMergeScheduler(SendPort sendPort) async {
 }
 
 void schedule(IsolateMedium medium) {
-  Timer(Duration(seconds: 5), () async {
+  Timer(Duration(seconds: SCHEDULER_DELAY_SEC), () async {
     await run(medium);
     schedule(medium);
   });
@@ -95,7 +96,7 @@ void run(IsolateMedium medium) async {
   var jsonData = await File('db/state.json').readAsString();
 
   var state = jsonDecode(jsonData);
-  var pages = List<String>.from(state['pages']);
+  var pages = state['pages'].cast<String>();
 
   if (pages.length >= 2) {
     await merge(pages[0], pages[1], medium: medium);

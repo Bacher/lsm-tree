@@ -270,7 +270,7 @@ class Database {
       switch (methodName) {
         case 'update_state':
           await state.mergePages(
-            List<String>.from(params['replacePages']),
+            params['replacePages'].cast<String>(),
             params['byPage'],
           );
           return;
